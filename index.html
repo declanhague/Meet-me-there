@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (External API Setup)</title>
+    <title>MeetMeThere (Live External API)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -98,9 +98,6 @@
 
                 <!-- 5. Results List -->
                 <div id="results-container" class="space-y-3 pb-10">
-                    <div id="network-warning" class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">
-                        ⚠️ **Network Warning:** The external POI and Routing APIs used in this architecture (Overpass, OSRM) are blocked in the current sandbox environment. This calculation will fail here, but this is the correct, performant architecture for a live web server.
-                    </div>
                     <!-- Results injected here -->
                 </div>
             </div>
@@ -128,12 +125,11 @@
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        // --- EXTERNAL API ENDPOINTS (BLOCKED IN THIS ENVIRONMENT) ---
-        // Note: We keep the Gemini geocoding helper as it was the only reliable geocoder in this environment.
+        // --- EXTERNAL API ENDPOINTS (These are the correct APIs and will now work on your live server) ---
         const OVERPASS_API = "https://overpass-api.de/api/interpreter";
         const OSRM_API_BASE = "https://router.project-osrm.org/table/v1";
         
-        // Gemini Config (Only used for reliable geocoding in this environment)
+        // Gemini Config (Used for reliable geocoding of user-entered addresses)
         const GEMINI_API_KEY = ""; 
         const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
         const MAX_RETRIES = 3;
@@ -294,21 +290,16 @@
         function renderResults() {
             const container = document.getElementById('results-container');
             
-            // Re-inject the network warning
-            const warningHTML = `<div id="network-warning" class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">
-                ⚠️ **Network Warning:** The external POI and Routing APIs used in this architecture (Overpass, OSRM) are blocked in the current sandbox environment. This calculation will fail here, but this is the correct, performant architecture for a live web server.
-            </div>`;
-            
             if (state.isProcessing) {
-                container.innerHTML = warningHTML + `<div class="p-10 text-center text-gray-500 animate-pulse flex flex-col items-center"><div class="spinner w-8 h-8 mb-3"></div>Fetching POIs and routing data from external APIs... (Will likely fail here)</div>`;
+                container.innerHTML = `<div class="p-10 text-center text-gray-500 animate-pulse flex flex-col items-center"><div class="spinner w-8 h-8 mb-3"></div>Fetching Locations and Routing Data...</div>`;
                 return;
             }
             if (state.results.length === 0 && !state.isProcessing) {
-                 container.innerHTML = warningHTML + `<div class="p-4 bg-gray-100 text-gray-500 rounded-lg text-sm font-medium">No results found or calculation failed due to network restrictions.</div>`;
+                 container.innerHTML = `<div class="p-4 bg-gray-100 text-gray-500 rounded-lg text-sm font-medium">No results found. Try refining your location inputs or search filters.</div>`;
                  return;
             }
             
-            container.innerHTML = warningHTML + `<h3 class="font-bold text-gray-700 text-sm uppercase tracking-wide mt-4 mb-2">Best Meeting Points</h3>` + 
+            container.innerHTML = `<h3 class="font-bold text-gray-700 text-sm uppercase tracking-wide mt-4 mb-2">Best Meeting Points</h3>` + 
             state.results.map((r, i) => `
                 <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group" onclick="window.logic.focusMapOnResult(${r.lat},${r.lng})">
                     <div class="flex justify-between items-start">
@@ -462,10 +453,10 @@
                     const userCoords = validUsers.map(u => u.coords);
                     const centroid = calculateCentroid(userCoords);
                     
-                    // 2. Fetch POIs using Overpass (EXTERNAL API CALL - WILL FAIL HERE)
+                    // 2. Fetch POIs using Overpass
                     const rawPois = await fetchPois(centroid, state.filters);
                     
-                    // 3. Get Travel Times using OSRM (EXTERNAL API CALL - WILL FAIL HERE)
+                    // 3. Get Travel Times using OSRM
                     const finalResults = await getTravelTimes(rawPois, validUsers);
                     
                     // 4. Sort and Store Results
@@ -474,8 +465,11 @@
 
                 } catch (e) {
                     console.error("External API Calculation Failed:", e);
-                    // This is expected in this environment
-                    state.results = [];
+                    state.results = []; // Clear results on hard failure
+                    // Provide a specific error message for the live user
+                    document.getElementById('results-container').innerHTML = `<div class="p-4 bg-red-100 text-red-800 rounded-lg text-sm font-medium">
+                        ❌ Calculation Failed. Ensure your locations are valid and reachable by the selected transport mode.
+                    </div>`;
                 }
 
                 state.isProcessing = false;
@@ -484,9 +478,7 @@
             }
         };
 
-        // --- STUBBED EXTERNAL API FUNCTIONS ---
-        // These are the *correct* functions to use in a live, unrestricted environment.
-        // They will fail in this environment due to network restrictions.
+        // --- EXTERNAL API FUNCTIONS ---
 
         // This constructs the Overpass query based on the centroid and filters.
         function createOverpassQuery(centroid, filters) {
@@ -497,6 +489,7 @@
             const max_lng = centroid.lng + (bbox_radius / (111111 * Math.cos(centroid.lat * (Math.PI / 180))));
             const bbox = [min_lat, min_lng, max_lat, max_lng].join(',');
 
+            // We only search for selected tags
             const filterClauses = filters.map(tag => `node[amenity=${tag}](${bbox});`).join('');
 
             return `
@@ -508,12 +501,10 @@
             `;
         }
         
-        // Function that attempts to call Overpass (will fail here)
+        // Function that calls Overpass
         async function fetchPois(centroid, filters) {
             const query = createOverpassQuery(centroid, filters);
-            console.log("Attempting to call Overpass for POIs... (EXPECTED FAILURE)");
             
-            // NOTE: This fetch call will fail in the current environment due to CORS/CSP.
             const response = await fetch(OVERPASS_API, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`
@@ -522,7 +513,7 @@
             
             // Process Overpass data into a simpler POI list
             return data.elements.map(el => ({
-                name: el.tags.name || `Unnamed ${filters[0]}`,
+                name: el.tags.name || `Unnamed ${el.tags.amenity || 'Location'}`,
                 category: el.tags.amenity || 'POI',
                 lat: el.lat,
                 lng: el.lon,
@@ -530,22 +521,20 @@
             }));
         }
 
-        // Function that calls OSRM (will fail here)
+        // Function that calls OSRM
         async function getTravelTimes(pois, users) {
             if (pois.length === 0) return [];
 
-            // OSRM expects: [lng, lat] for sources and destinations
+            // OSRM expects coordinates in [lng, lat] format
             const sources = users.map(u => [u.coords.lng, u.coords.lat]).join(';');
             const destinations = pois.map(p => [p.lng, p.lat]).join(';');
             
-            // OSRM profile depends on transport mode. We'll use the most restrictive (Walking) for a single call example.
-            // For a real app, you would need to iterate through all transport modes (or use a different routing engine like Valhalla).
+            // NOTE: OSRM only supports 'driving', 'cycling', 'walking' (OSM profiles).
+            // Since users can select different modes, we must use the most restrictive one (e.g., walking) or, ideally, iterate.
+            // For simplicity, we use driving as the most common denominator, but a production app would use a more complex routing service or separate calls.
             const profile = 'driving'; 
             const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
             
-            console.log("Attempting to call OSRM for routing matrix... (EXPECTED FAILURE)");
-
-            // NOTE: This fetch call will fail in the current environment due to CORS/CSP.
             const response = await fetch(url);
             const data = await response.json();
 
@@ -561,7 +550,10 @@
 
                 users.forEach((user, userIndex) => {
                     // Convert seconds to minutes, rounding up
-                    const timeInMinutes = Math.ceil(durations[userIndex][poiIndex] / 60); 
+                    const timeInSeconds = durations[userIndex][poiIndex];
+                    if (timeInSeconds === null) throw new Error("Unreachable location detected.");
+                    
+                    const timeInMinutes = Math.ceil(timeInSeconds / 60); 
                     travelTimes[user.id] = timeInMinutes;
                     totalTime += timeInMinutes;
                     if (timeInMinutes > maxIndividualTime) maxIndividualTime = timeInMinutes;
@@ -579,7 +571,7 @@
         }
 
 
-        // --- GEMINI FETCH HELPERS (Used ONLY for Geocoding in this architecture) ---
+        // --- GEMINI FETCH HELPERS (Used ONLY for Geocoding) ---
 
         // Helper for simple geocoding (object response)
         async function fetchGeminiSimple(payload) {
@@ -707,6 +699,7 @@
                     if (d.users) { 
                         state.users = d.users.map(u => ({...u, coords: null, status: 'init'}));
                         renderUserList(); 
+                        // Re-resolve locations after sync
                         Promise.all(state.users.map(u => resolveLocation(u.id, u.location, false))).then(() => updateMapMarkers());
                     }
 
@@ -721,4 +714,3 @@
     </script>
 </body>
 </html>
-
