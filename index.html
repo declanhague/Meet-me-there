@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (CORS Hardened)</title>
+    <title>MeetMeThere (Aggressive Encoding Fix)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -573,7 +573,7 @@
                     }
                     
                     // 3. Get Travel Times using OSRM
-                    logMessage('info', `Step 3: Calculating travel times for ${rawPois.length} POIs using OSRM API.`);
+                    logMessage('info', `Step 3: Calculating travel times for ${rawPois.length} POIs using OSRM API. (Using Aggressive Encoding Fix)`);
                     const finalResults = await getTravelTimes(rawPois, validUsers);
                     logMessage('success', `OSRM API Success. Calculated routes for ${finalResults.length} venues.`);
                     
@@ -620,7 +620,7 @@
         async function fetchPois(centroid, filters) {
             const query = createOverpassQuery(centroid, filters);
             
-            // NOTE: Added mode: 'cors' for GitHub Pages compatibility
+            // CORS mode added for GitHub Pages compatibility
             const response = await fetch(OVERPASS_API, {
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`,
@@ -655,23 +655,20 @@
             else profile = 'driving'; // Default fallback
 
             // IMPORTANT: OSRM uses Longitude,Latitude (LNG,LAT) format
-            const rawSources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
-            const rawDestinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
+            // AGGRESSIVE ENCODING FIX: Manually join coordinates with the encoded semicolon '%3B'.
+            // This bypasses the problematic behavior of encodeURIComponent in certain environments.
+            const sources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join('%3B');
+            const destinations = pois.map(p => `${p.lng},${p.lat}`).join('%3B');
             
-            // URL Encoding is mandatory for the semicolon delimiters
-            const encodedSources = encodeURIComponent(rawSources);
-            const encodedDestinations = encodeURIComponent(rawDestinations);
-
-            // Construct the final URL
-            const url = `${OSRM_API_BASE}/${profile}?sources=${encodedSources}&destinations=${encodedDestinations}&annotations=duration`;
+            // Construct the final URL (NO encodeURIComponent is used on sources/destinations)
+            const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
 
             // Detailed Logging for Inspection
             logMessage('info', `OSRM Profile: ${profile}`);
-            logMessage('info', `OSRM Raw Sources: ${rawSources}`);
-            logMessage('info', `OSRM Encoded Sources: ${encodedSources}`);
-            logMessage('info', `OSRM Final URL: ${url}`);
+            logMessage('info', `OSRM Raw Coords (using %3B): ${sources}`);
+            logMessage('info', `OSRM Final URL (Aggressive Fix): ${url}`);
 
-            // NOTE: Added mode: 'cors' for GitHub Pages compatibility
+            // CORS mode added for GitHub Pages compatibility
             const response = await fetch(url, {
                 mode: 'cors'
             });
