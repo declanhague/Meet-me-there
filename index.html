@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (Live External API)</title>
+    <title>MeetMeThere (Self-Diagnostic)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -39,6 +39,36 @@
         
         /* Status Icon alignment */
         .status-wrapper { width: 24px; display: flex; justify-content: center; }
+
+        /* Debug Log Panel Styling */
+        #debug-panel {
+            position: fixed;
+            bottom: 60px;
+            left: 20px;
+            width: 350px;
+            max-width: 90vw;
+            height: 300px;
+            background-color: #1f2937; /* Dark background */
+            color: #d1d5db; /* Light gray text */
+            border-radius: 0.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+        }
+        #debug-panel.active { display: flex; }
+        #debug-log-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 0.5rem;
+            font-size: 0.75rem;
+            font-family: monospace;
+            line-height: 1.3;
+        }
+        .log-item-info { color: #9ca3af; }
+        .log-item-success { color: #4ade80; }
+        .log-item-warning { color: #facc15; }
+        .log-item-error { color: #f87171; font-weight: bold; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 h-screen flex flex-col">
@@ -114,6 +144,25 @@
         </div>
     </div>
 
+    <!-- Debug Log Panel -->
+    <div id="debug-panel">
+        <div class="p-2 flex justify-between items-center border-b border-gray-700">
+            <h4 class="text-sm font-semibold text-indigo-400">Live Debug Log</h4>
+            <button onclick="window.logic.toggleDebugPanel()" class="text-gray-400 hover:text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div id="debug-log-content">
+            <!-- Log messages appended here -->
+        </div>
+    </div>
+    
+    <!-- Debug Toggle Button -->
+    <button id="debug-toggle-btn" onclick="window.logic.toggleDebugPanel()" class="fixed bottom-4 left-4 p-3 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 z-50 transition transform active:scale-95" title="Toggle Debug Log">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M12 4h.01"/><path d="M19.39 6.75l-1.32 1.32"/><path d="M4.61 6.75l1.32 1.32"/><path d="M21.05 13.91l-1.91.56"/><path d="M3.95 13.91l1.91.56"/><path d="M19 18v1"/><path d="M5 18v1"/></svg>
+    </button>
+
+
     <!-- LOGIC -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -166,7 +215,9 @@
             optMode: 'individual',
             results: [],
             userId: 'guest',
-            isProcessing: false
+            isProcessing: false,
+            appLogs: [], // New state for live logs
+            isDebugPanelOpen: false, // New state for panel visibility
         };
 
         // --- GLOBALS ---
@@ -175,6 +226,7 @@
 
         // --- INIT ---
         async function init() {
+            logMessage('info', "App Initializing...");
             // 1. Map
             initMap();
 
@@ -183,7 +235,13 @@
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
-                try { await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth)); } catch {}
+                try { 
+                    const signin = initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth);
+                    await signin;
+                    logMessage('success', "Firebase Auth successful.");
+                } catch (e) {
+                    logMessage('error', `Firebase Auth failed: ${e.message}`);
+                }
                 
                 onAuthStateChanged(auth, (u) => {
                     if (u) {
@@ -200,22 +258,24 @@
             renderModeButtons();
 
             // 4. Resolve initial locations
-            console.log("Starting initial location resolution...");
+            logMessage('info', "Starting initial location resolution...");
             const resolutionPromises = state.users.map(u => resolveLocation(u.id, u.location, false));
             await Promise.all(resolutionPromises);
             
             // 5. Final UI/Map update 
             updateMapMarkers();
+            logMessage('success', "Initial state loaded.");
         }
 
         // --- UTILITIES ---
         const delay = ms => new Promise(res => setTimeout(res, ms));
 
         function getStatusHTML(user) {
-            if (user.status === 'searching') return `<div class="status-wrapper"><div class="spinner"></div></div>`;
-            if (user.status === 'found') return `<div class="status-wrapper text-green-500"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`;
-            if (user.status === 'error') return `<div class="status-wrapper text-red-500" title="Location not found. Try 'City, Country' or 'Lat, Lng' format."><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>`;
-            return '';
+            const baseClasses = "text-xs font-semibold px-2 py-0.5 rounded-full";
+            if (user.status === 'searching') return `<div class="status-wrapper"><span class="${baseClasses} bg-indigo-100 text-indigo-700 flex items-center gap-1"><div class="spinner w-3 h-3"></div> Searching...</span></div>`;
+            if (user.status === 'found') return `<div class="status-wrapper"><span class="${baseClasses} bg-green-100 text-green-700">Success</span></div>`;
+            if (user.status === 'error') return `<div class="status-wrapper"><span class="${baseClasses} bg-red-100 text-red-700 cursor-help" title="Location not found. Try 'City, Country' or 'Lat, Lng' format.">Error</span></div>`;
+            return `<div class="status-wrapper"><span class="${baseClasses} bg-gray-100 text-gray-500">Waiting</span></div>`;
         }
 
         function calculateCentroid(coords) {
@@ -225,6 +285,41 @@
             return { lat: avgLat, lng: avgLng };
         }
 
+        // --- LIVE LOGGING ---
+        function logMessage(type, message) {
+            const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false, second: '2-digit', minute: '2-digit' });
+            const logItem = { timestamp, type, message };
+            state.appLogs.push(logItem);
+            // Limit log size to prevent memory issues
+            if (state.appLogs.length > 50) state.appLogs.shift(); 
+
+            // Log to console as well for full debug context
+            if (type === 'error') console.error(`[${timestamp}] [UI LOG] ${message}`);
+            else if (type === 'warning') console.warn(`[${timestamp}] [UI LOG] ${message}`);
+            else console.log(`[${timestamp}] [UI LOG] ${message}`);
+
+            if (state.isDebugPanelOpen) renderLogs();
+        }
+
+        function renderLogs() {
+            const container = document.getElementById('debug-log-content');
+            if (!container) return;
+            
+            container.innerHTML = state.appLogs.map(log => {
+                let colorClass;
+                let prefix;
+                switch(log.type) {
+                    case 'error': colorClass = 'log-item-error'; prefix = '❌ ERROR:'; break;
+                    case 'warning': colorClass = 'log-item-warning'; prefix = '⚠️ WARN:'; break;
+                    case 'success': colorClass = 'log-item-success'; prefix = '✅ SUCCESS:'; break;
+                    default: colorClass = 'log-item-info'; prefix = 'ℹ️ INFO:';
+                }
+                return `<div class="${colorClass}">[${log.timestamp}] ${prefix} ${log.message}</div>`;
+            }).join('');
+
+            container.scrollTop = container.scrollHeight; // Scroll to bottom
+        }
+
         // --- UI RENDERERS ---
         function renderUserList() {
             const container = document.getElementById('users-list');
@@ -232,27 +327,27 @@
                 <div class="flex items-center gap-3 bg-white p-3 rounded-xl border border-gray-200 shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500" id="user-row-${u.id}">
                     <div class="w-8 h-8 flex-shrink-0 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm shadow-sm">${idx + 1}</div>
                     
-                    <div class="flex-grow relative">
+                    <div class="flex-grow">
                         <input type="text" 
                             value="${u.location}" 
                             oninput="window.logic.handleInput(${u.id}, this.value)"
                             class="w-full bg-transparent text-sm font-medium text-gray-800 placeholder-gray-400 outline-none"
                             placeholder="City, Postcode, or Lat, Lng">
-                        
-                        <div id="status-${u.id}" class="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
-                            ${getStatusHTML(u)}
-                        </div>
                     </div>
 
+                    <div id="status-${u.id}" class="flex-shrink-0 w-24 text-right">
+                        ${getStatusHTML(u)}
+                    </div>
+                    
                     <div class="h-6 w-px bg-gray-200 mx-1"></div>
 
-                    <select onchange="window.logic.handleTransport(${u.id}, this.value)" class="text-xs font-medium text-gray-500 bg-transparent outline-none cursor-pointer">
+                    <select onchange="window.logic.handleTransport(${u.id}, this.value)" class="text-xs font-medium text-gray-500 bg-transparent outline-none cursor-pointer flex-shrink-0">
                         <option value="Driving" ${u.transport==='Driving'?'selected':''}>Car</option>
                         <option value="Cycling" ${u.transport==='Cycling'?'selected':''}>Bike</option>
                         <option value="Walking" ${u.transport==='Walking'?'selected':''}>Walk</option>
                     </select>
 
-                    <button onclick="window.logic.removeUser(${u.id})" class="text-gray-300 hover:text-red-500 transition-colors pl-1">
+                    <button onclick="window.logic.removeUser(${u.id})" class="text-gray-300 hover:text-red-500 transition-colors pl-1 flex-shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                 </div>
@@ -295,7 +390,7 @@
                 return;
             }
             if (state.results.length === 0 && !state.isProcessing) {
-                 container.innerHTML = `<div class="p-4 bg-gray-100 text-gray-500 rounded-lg text-sm font-medium">No results found. Try refining your location inputs or search filters.</div>`;
+                 container.innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">No results found. Try refining your location inputs or search filters. (Check Debug Log for API Errors)</div>`;
                  return;
             }
             
@@ -382,6 +477,16 @@
 
         // --- LOGIC ENGINE ---
         window.logic = {
+            toggleDebugPanel: () => {
+                state.isDebugPanelOpen = !state.isDebugPanelOpen;
+                const panel = document.getElementById('debug-panel');
+                if (state.isDebugPanelOpen) {
+                    panel.classList.add('active');
+                    renderLogs();
+                } else {
+                    panel.classList.remove('active');
+                }
+            },
             handleInput: (id, val) => {
                 const u = state.users.find(u => u.id === id);
                 if (u) {
@@ -392,7 +497,7 @@
                     
                     debounceTimer = setTimeout(() => {
                         resolveLocation(id, val, true).then(() => updateMapMarkers()); 
-                    }, 500); 
+                    }, 1000); // Increased debounce for stability
                 }
             },
             
@@ -441,34 +546,47 @@
             runCalculation: async () => {
                 const validUsers = state.users.filter(u => u.coords);
                 if (validUsers.length < 2) { 
-                    document.getElementById('results-container').innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">Please ensure at least two locations have a green check mark before calculating.</div>`;
+                    const msg = "Calculation requires at least two locations successfully geocoded.";
+                    logMessage('warning', msg);
+                    document.getElementById('results-container').innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">${msg}</div>`;
                     return; 
                 }
                 
                 state.isProcessing = true;
                 renderResults();
+                saveToDB();
 
                 try {
+                    logMessage('info', "Step 1: Calculating Centroid...");
                     // 1. Calculate Centroid (Midpoint)
                     const userCoords = validUsers.map(u => u.coords);
                     const centroid = calculateCentroid(userCoords);
+                    logMessage('success', `Centroid Calculated at: ${centroid.lat.toFixed(4)}, ${centroid.lng.toFixed(4)}`);
                     
                     // 2. Fetch POIs using Overpass
+                    logMessage('info', `Step 2: Querying Overpass API for POIs near centroid with filters: ${state.filters.join(', ')}`);
                     const rawPois = await fetchPois(centroid, state.filters);
+                    logMessage('success', `Overpass API Success. Found ${rawPois.length} potential POIs.`);
+
+                    if (rawPois.length === 0) {
+                         throw new Error("No POIs found near the midpoint with the current filters. Try widening the search.");
+                    }
                     
                     // 3. Get Travel Times using OSRM
+                    logMessage('info', `Step 3: Calculating travel times for ${rawPois.length} POIs using OSRM API.`);
                     const finalResults = await getTravelTimes(rawPois, validUsers);
+                    logMessage('success', `OSRM API Success. Calculated routes for ${finalResults.length} venues.`);
                     
                     // 4. Sort and Store Results
                     finalResults.sort((a, b) => state.optMode === 'total' ? a.totalTime - b.totalTime : a.maxIndividualTime - b.maxIndividualTime);
                     state.results = finalResults.slice(0, 10);
 
                 } catch (e) {
-                    console.error("External API Calculation Failed:", e);
+                    logMessage('error', `❌ Major Calculation Failed: ${e.message}`);
                     state.results = []; // Clear results on hard failure
                     // Provide a specific error message for the live user
                     document.getElementById('results-container').innerHTML = `<div class="p-4 bg-red-100 text-red-800 rounded-lg text-sm font-medium">
-                        ❌ Calculation Failed. Ensure your locations are valid and reachable by the selected transport mode.
+                        ❌ Calculation Failed. See the Debug Log for details. Error: ${e.message}
                     </div>`;
                 }
 
@@ -480,7 +598,6 @@
 
         // --- EXTERNAL API FUNCTIONS ---
 
-        // This constructs the Overpass query based on the centroid and filters.
         function createOverpassQuery(centroid, filters) {
             const bbox_radius = 5000; // 5km radius
             const min_lat = centroid.lat - (bbox_radius / 111111);
@@ -489,7 +606,6 @@
             const max_lng = centroid.lng + (bbox_radius / (111111 * Math.cos(centroid.lat * (Math.PI / 180))));
             const bbox = [min_lat, min_lng, max_lat, max_lng].join(',');
 
-            // We only search for selected tags
             const filterClauses = filters.map(tag => `node[amenity=${tag}](${bbox});`).join('');
 
             return `
@@ -501,7 +617,6 @@
             `;
         }
         
-        // Function that calls Overpass
         async function fetchPois(centroid, filters) {
             const query = createOverpassQuery(centroid, filters);
             
@@ -509,71 +624,82 @@
                 method: 'POST',
                 body: `data=${encodeURIComponent(query)}`
             });
+            
+            if (!response.ok) {
+                logMessage('error', `Overpass HTTP Error: ${response.status} ${response.statusText}`);
+                throw new Error(`Overpass API failed with status ${response.status}`);
+            }
+
             const data = await response.json();
             
-            // Process Overpass data into a simpler POI list
-            return data.elements.map(el => ({
-                name: el.tags.name || `Unnamed ${el.tags.amenity || 'Location'}`,
-                category: el.tags.amenity || 'POI',
-                lat: el.lat,
-                lng: el.lon,
-                id: el.id
-            }));
+            return data.elements
+                .filter(el => el.lat && el.lon)
+                .map(el => ({
+                    name: el.tags.name || `Unnamed ${el.tags.amenity || 'Location'}`,
+                    category: el.tags.amenity || 'POI',
+                    lat: el.lat,
+                    lng: el.lon,
+                    id: el.id
+                }));
         }
 
-        // Function that calls OSRM
         async function getTravelTimes(pois, users) {
-            if (pois.length === 0) return [];
-
-            // OSRM expects coordinates in [lng, lat] format
             const sources = users.map(u => [u.coords.lng, u.coords.lat]).join(';');
             const destinations = pois.map(p => [p.lng, p.lat]).join(';');
             
-            // NOTE: OSRM only supports 'driving', 'cycling', 'walking' (OSM profiles).
-            // Since users can select different modes, we must use the most restrictive one (e.g., walking) or, ideally, iterate.
-            // For simplicity, we use driving as the most common denominator, but a production app would use a more complex routing service or separate calls.
             const profile = 'driving'; 
             const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
-            
+
             const response = await fetch(url);
             const data = await response.json();
 
-            if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.message}`);
+            if (data.code !== 'Ok') {
+                logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}`);
+                throw new Error(`OSRM Error: ${data.message}. Locations might be unreachable by car.`);
+            }
 
             const results = [];
-            const durations = data.durations; // durations[userIndex][poiIndex] in seconds
+            const durations = data.durations; 
 
             pois.forEach((poi, poiIndex) => {
                 let totalTime = 0;
                 let maxIndividualTime = 0;
                 const travelTimes = {};
+                let isReachable = true;
 
                 users.forEach((user, userIndex) => {
-                    // Convert seconds to minutes, rounding up
                     const timeInSeconds = durations[userIndex][poiIndex];
-                    if (timeInSeconds === null) throw new Error("Unreachable location detected.");
-                    
-                    const timeInMinutes = Math.ceil(timeInSeconds / 60); 
-                    travelTimes[user.id] = timeInMinutes;
-                    totalTime += timeInMinutes;
-                    if (timeInMinutes > maxIndividualTime) maxIndividualTime = timeInMinutes;
+                    if (timeInSeconds === null) {
+                         logMessage('warning', `POI ${poi.name} unreachable from Traveler ${userIndex + 1}. Excluding this POI.`);
+                         isReachable = false;
+                    }
+                    if (isReachable) {
+                        const timeInMinutes = Math.ceil(timeInSeconds / 60); 
+                        travelTimes[user.id] = timeInMinutes;
+                        totalTime += timeInMinutes;
+                        if (timeInMinutes > maxIndividualTime) maxIndividualTime = timeInMinutes;
+                    }
                 });
 
-                results.push({
-                    ...poi,
-                    totalTime,
-                    maxIndividualTime,
-                    travelTimes
-                });
+                if (isReachable) {
+                    results.push({
+                        ...poi,
+                        totalTime,
+                        maxIndividualTime,
+                        travelTimes
+                    });
+                }
             });
+            
+            if (results.length === 0) {
+                 throw new Error("All potential POIs were found to be unreachable by at least one traveler.");
+            }
 
             return results;
         }
 
 
         // --- GEMINI FETCH HELPERS (Used ONLY for Geocoding) ---
-
-        // Helper for simple geocoding (object response)
         async function fetchGeminiSimple(payload) {
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
@@ -595,6 +721,7 @@
                 } catch (e) {
                     if (attempt < MAX_RETRIES - 1) {
                         const backoffTime = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+                        logMessage('warning', `Gemini Geocoding retry ${attempt + 1}: backing off for ${backoffTime}ms.`);
                         await delay(backoffTime);
                     } else {
                         throw e; 
@@ -603,7 +730,7 @@
             }
         }
         
-        // --- GEOCODING (Using the previously working Gemini helper) ---
+        // --- GEOCODING ---
         async function resolveLocation(id, name, save=true) {
             const u = state.users.find(u => u.id === id);
             const normalizedName = name.toUpperCase().trim();
@@ -612,12 +739,13 @@
                 u.status = 'init'; u.coords = null; updateUserStatusUI(id); if(save) saveToDB(); return; 
             }
             
-            // 1. LOCAL COORDINATE FALLBACK 
+            // 1. LOCAL COORDINATE FALLBACK (For initial demo coordinates)
             if (HARDCODED_COORDS[normalizedName]) {
                 u.coords = HARDCODED_COORDS[normalizedName];
                 u.status = 'found';
                 updateUserStatusUI(id);
                 if(save) saveToDB();
+                logMessage('success', `Traveler ${id}: Location "${name}" resolved via Hardcode.`);
                 return;
             }
 
@@ -629,12 +757,14 @@
                 u.status = 'found';
                 updateUserStatusUI(id);
                 if(save) saveToDB();
+                logMessage('success', `Traveler ${id}: Location "${name}" resolved via Lat/Lng input.`);
                 return;
             }
 
             // 3. GEMINI API GEOCODING
             u.status = 'searching';
             updateUserStatusUI(id); 
+            logMessage('info', `Traveler ${id}: Attempting Geocoding for "${name}" via Gemini.`);
 
             const systemPrompt = "Act as a Geocoding service. Find the precise latitude (lat) and longitude (lng) for the given address or location name using real-time search grounding. Respond ONLY with a JSON object containing the 'lat' and 'lng' keys as floating-point numbers. Do not include any text, markdown, or explanation outside the JSON object.";
             const userQuery = `Find the latitude and longitude for the location: ${name}.`;
@@ -660,14 +790,16 @@
                 if (typeof coords.lat === 'number' && typeof coords.lng === 'number' && (coords.lat !== 0 || coords.lng !== 0)) {
                     u.coords = { lat: coords.lat, lng: coords.lng };
                     u.status = 'found';
+                    logMessage('success', `Traveler ${id}: Geocoding found coordinates ${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}.`);
                 } else {
                     u.coords = null;
                     u.status = 'error';
+                    logMessage('error', `Traveler ${id}: Geocoding failed: LLM returned invalid or zero coordinates.`);
                 }
             } catch (e) {
                 u.coords = null;
                 u.status = 'error';
-                console.error(`Gemini Geocoding failed for ${name}:`, e);
+                logMessage('error', `Traveler ${id}: Geocoding failed completely. Error: ${e.message}`);
             }
             
             updateUserStatusUI(id);
@@ -684,7 +816,7 @@
                 filters: state.filters, 
                 optMode: state.optMode
             };
-            setDoc(ref, syncData).catch(e=>console.log("Firestore Save Error:", e));
+            setDoc(ref, syncData).catch(e=>logMessage('warning', `Firestore Save Error: ${e.message}`));
         }
 
         function setupSync() {
@@ -700,6 +832,7 @@
                         state.users = d.users.map(u => ({...u, coords: null, status: 'init'}));
                         renderUserList(); 
                         // Re-resolve locations after sync
+                        logMessage('info', "Sync successful. Re-resolving locations from Firestore.");
                         Promise.all(state.users.map(u => resolveLocation(u.id, u.location, false))).then(() => updateMapMarkers());
                     }
 
