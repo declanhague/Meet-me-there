@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (OSRM Encoding Reinstated)</title>
+    <title>MeetMeThere (CORS Hardened)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -176,9 +176,9 @@
         
         // --- EXTERNAL API ENDPOINTS (These are the correct APIs and will now work on your live server) ---
         const OVERPASS_API = "https://overpass-api.de/api/interpreter";
-        const OSRM_API_BASE = "https://router.project-osrm.org/table/v1"; // Correct base for /table service
+        const OSRM_API_BASE = "https://router.project-osrm.org/table/v1"; 
         
-        // Gemini Config (Used for reliable geocoding of user-entered addresses)
+        // Gemini Config
         const GEMINI_API_KEY = ""; 
         const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
         const MAX_RETRIES = 3;
@@ -620,9 +620,11 @@
         async function fetchPois(centroid, filters) {
             const query = createOverpassQuery(centroid, filters);
             
+            // NOTE: Added mode: 'cors' for GitHub Pages compatibility
             const response = await fetch(OVERPASS_API, {
                 method: 'POST',
-                body: `data=${encodeURIComponent(query)}`
+                body: `data=${encodeURIComponent(query)}`,
+                mode: 'cors'
             });
             
             if (!response.ok) {
@@ -653,11 +655,10 @@
             else profile = 'driving'; // Default fallback
 
             // IMPORTANT: OSRM uses Longitude,Latitude (LNG,LAT) format
-            // Coordinate lists must be semicolon-separated (;) and URL-encoded.
             const rawSources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
             const rawDestinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
             
-            // Reinstating URL Encoding (The standard, correct way)
+            // URL Encoding is mandatory for the semicolon delimiters
             const encodedSources = encodeURIComponent(rawSources);
             const encodedDestinations = encodeURIComponent(rawDestinations);
 
@@ -670,8 +671,10 @@
             logMessage('info', `OSRM Encoded Sources: ${encodedSources}`);
             logMessage('info', `OSRM Final URL: ${url}`);
 
-
-            const response = await fetch(url);
+            // NOTE: Added mode: 'cors' for GitHub Pages compatibility
+            const response = await fetch(url, {
+                mode: 'cors'
+            });
             const data = await response.json();
 
             if (data.code !== 'Ok') {
