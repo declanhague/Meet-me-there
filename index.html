@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (OSRM Unencoded Revert)</title>
+    <title>MeetMeThere (OSRM Encoding Reinstated)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -176,7 +176,7 @@
         
         // --- EXTERNAL API ENDPOINTS (These are the correct APIs and will now work on your live server) ---
         const OVERPASS_API = "https://overpass-api.de/api/interpreter";
-        const OSRM_API_BASE = "https://router.project-osrm.org/table/v1";
+        const OSRM_API_BASE = "https://router.project-osrm.org/table/v1"; // Correct base for /table service
         
         // Gemini Config (Used for reliable geocoding of user-entered addresses)
         const GEMINI_API_KEY = ""; 
@@ -446,7 +446,7 @@
                 if (u.coords) {
                     const icon = L.divIcon({
                         className: 'custom-marker',
-                        html: `<div style="background:#4f46e5; color:white; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 4px 6px rgba(0,0,0,0.2); font-size:12px;">${i+1}</div>`,
+                        html: `<div style="background:#4f46e5; color:white; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-size:12px;">${i+1}</div>`,
                         iconSize: [28, 28], iconAnchor: [14, 14]
                     });
                     L.marker([u.coords.lat, u.coords.lng], { icon }).addTo(markersLayer).bindPopup(`<b>Traveler ${i+1}</b><br>${u.location}`);
@@ -462,7 +462,7 @@
                     if (r.lat && r.lng) {
                         const icon = L.divIcon({
                             className: 'custom-marker',
-                            html: `<div style="background:#ef4444; color:white; width:24px; height:24px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 4px 6px rgba(0,0,0,0.2); font-size:10px;">${i+1}</div>`,
+                            html: `<div style="background:#ef4444; color:white; width:24px; height:24px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-size:10px;">${i+1}</div>`,
                             iconSize: [24, 24], iconAnchor: [12, 12]
                         });
                         L.marker([r.lat, r.lng], { icon }).addTo(markersLayer).bindPopup(`<b>#${i+1} ${r.name}</b><br>${state.optMode === 'total' ? r.totalTime : r.maxIndividualTime} min`);
@@ -582,7 +582,7 @@
                     state.results = finalResults.slice(0, 10);
 
                 } catch (e) {
-                    logMessage('error', `❌ Major Calculation Failed: ${e.message}`);
+                    logMessage('error', `❌ Major Calculation Failed: OSRM Error: ${e.message}`);
                     state.results = []; // Clear results on hard failure
                     // Provide a specific error message for the live user
                     document.getElementById('results-container').innerHTML = `<div class="p-4 bg-red-100 text-red-800 rounded-lg text-sm font-medium">
@@ -644,7 +644,7 @@
         }
 
         async function getTravelTimes(pois, users) {
-            // Determine OSRM Profile based on user's mode (using the first user's mode for simplicity)
+            // Determine OSRM Profile
             const userTransport = users[0].transport;
             let profile;
             if (userTransport === 'Driving') profile = 'driving';
@@ -652,17 +652,23 @@
             else if (userTransport === 'Walking') profile = 'foot';
             else profile = 'driving'; // Default fallback
 
-            const sources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
-            const destinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
+            // IMPORTANT: OSRM uses Longitude,Latitude (LNG,LAT) format
+            // Coordinate lists must be semicolon-separated (;) and URL-encoded.
+            const rawSources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
+            const rawDestinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
             
-            // Reverting to UNENCODED strings for sources/destinations, relying on the
-            // fetch() API to handle the ';' encoding, as explicit encoding failed.
-            const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
+            // Reinstating URL Encoding (The standard, correct way)
+            const encodedSources = encodeURIComponent(rawSources);
+            const encodedDestinations = encodeURIComponent(rawDestinations);
 
-            // Log the coordinate strings and the resulting URL
-            logMessage('info', `OSRM Request Coords (Sources): ${sources.substring(0, 100)}...`);
-            logMessage('info', `OSRM Request Coords (Destinations): ${destinations.substring(0, 100)}...`);
-            logMessage('info', `OSRM Request URL: ${url}`);
+            // Construct the final URL
+            const url = `${OSRM_API_BASE}/${profile}?sources=${encodedSources}&destinations=${encodedDestinations}&annotations=duration`;
+
+            // Detailed Logging for Inspection
+            logMessage('info', `OSRM Profile: ${profile}`);
+            logMessage('info', `OSRM Raw Sources: ${rawSources}`);
+            logMessage('info', `OSRM Encoded Sources: ${encodedSources}`);
+            logMessage('info', `OSRM Final URL: ${url}`);
 
 
             const response = await fetch(url);
@@ -670,7 +676,7 @@
 
             if (data.code !== 'Ok') {
                 logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}`);
-                throw new Error(`OSRM Error: ${data.message}. Locations might be unreachable or the URL malformed.`);
+                throw new Error(`${data.code}: ${data.message}. Locations might be unreachable or the URL malformed.`);
             }
 
             const results = [];
@@ -683,7 +689,8 @@
                 let isReachable = true;
 
                 users.forEach((user, userIndex) => {
-                    const timeInSeconds = durations[userIndex][poiIndex];
+                    // Durations are in seconds
+                    const timeInSeconds = durations[userIndex][poiIndex]; 
                     if (timeInSeconds === null) {
                          logMessage('warning', `POI ${poi.name} unreachable from Traveler ${userIndex + 1}. Excluding this POI.`);
                          isReachable = false;
