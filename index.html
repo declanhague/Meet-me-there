@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (Robust OSRM Fix)</title>
+    <title>MeetMeThere (OSRM Unencoded Revert)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -655,15 +655,15 @@
             const sources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
             const destinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
             
-            // FIX: URL encode the sources and destinations strings to handle ';' separators robustly
-            const encodedSources = encodeURIComponent(sources);
-            const encodedDestinations = encodeURIComponent(destinations);
+            // Reverting to UNENCODED strings for sources/destinations, relying on the
+            // fetch() API to handle the ';' encoding, as explicit encoding failed.
+            const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
 
-            // Construct the URL using the encoded strings
-            const url = `${OSRM_API_BASE}/${profile}?sources=${encodedSources}&destinations=${encodedDestinations}&annotations=duration`;
+            // Log the coordinate strings and the resulting URL
+            logMessage('info', `OSRM Request Coords (Sources): ${sources.substring(0, 100)}...`);
+            logMessage('info', `OSRM Request Coords (Destinations): ${destinations.substring(0, 100)}...`);
+            logMessage('info', `OSRM Request URL: ${url}`);
 
-            // Log the full encoded URL for diagnosis
-            logMessage('info', `OSRM Request: Profile=${profile}. Full URL: ${url}`);
 
             const response = await fetch(url);
             const data = await response.json();
