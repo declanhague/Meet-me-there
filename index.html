@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetMeThere (Self-Diagnostic)</title>
+    <title>MeetMeThere (Robust OSRM Fix)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet for Maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -655,17 +655,21 @@
             const sources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
             const destinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
             
-            // Note: The base API constant is correct: https://router.project-osrm.org/table/v1
-            const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
+            // FIX: URL encode the sources and destinations strings to handle ';' separators robustly
+            const encodedSources = encodeURIComponent(sources);
+            const encodedDestinations = encodeURIComponent(destinations);
 
-            // Log the URL used for diagnosis
-            logMessage('info', `OSRM Request: Profile=${profile}. URL start: ${url.substring(0, 100)}...`);
+            // Construct the URL using the encoded strings
+            const url = `${OSRM_API_BASE}/${profile}?sources=${encodedSources}&destinations=${encodedDestinations}&annotations=duration`;
+
+            // Log the full encoded URL for diagnosis
+            logMessage('info', `OSRM Request: Profile=${profile}. Full URL: ${url}`);
 
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.code !== 'Ok') {
-                logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}. Full URL: ${url}`);
+                logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}`);
                 throw new Error(`OSRM Error: ${data.message}. Locations might be unreachable or the URL malformed.`);
             }
 
