@@ -644,18 +644,29 @@
         }
 
         async function getTravelTimes(pois, users) {
-            const sources = users.map(u => [u.coords.lng, u.coords.lat]).join(';');
-            const destinations = pois.map(p => [p.lng, p.lat]).join(';');
+            // Determine OSRM Profile based on user's mode (using the first user's mode for simplicity)
+            const userTransport = users[0].transport;
+            let profile;
+            if (userTransport === 'Driving') profile = 'driving';
+            else if (userTransport === 'Cycling') profile = 'bike';
+            else if (userTransport === 'Walking') profile = 'foot';
+            else profile = 'driving'; // Default fallback
+
+            const sources = users.map(u => `${u.coords.lng},${u.coords.lat}`).join(';');
+            const destinations = pois.map(p => `${p.lng},${p.lat}`).join(';');
             
-            const profile = 'driving'; 
+            // Note: The base API constant is correct: https://router.project-osrm.org/table/v1
             const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
+
+            // Log the URL used for diagnosis
+            logMessage('info', `OSRM Request: Profile=${profile}. URL start: ${url.substring(0, 100)}...`);
 
             const response = await fetch(url);
             const data = await response.json();
 
             if (data.code !== 'Ok') {
-                logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}`);
-                throw new Error(`OSRM Error: ${data.message}. Locations might be unreachable by car.`);
+                logMessage('error', `OSRM Response Error: ${data.code} - ${data.message}. Full URL: ${url}`);
+                throw new Error(`OSRM Error: ${data.message}. Locations might be unreachable or the URL malformed.`);
             }
 
             const results = [];
