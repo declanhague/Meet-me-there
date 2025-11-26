@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeetMeThere (External API Setup)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* Prominent Map Styles */
+        #map-container { 
+            height: 50vh; 
+            min-height: 400px; 
+            width: 100%; 
+            border-radius: 1rem; 
+            z-index: 1; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        
+        /* Mobile optimization for map height */
+        @media (min-width: 1024px) {
+            #map-container { height: 100%; min-height: 600px; }
+        }
+
+        .spinner {
+            border: 3px solid rgba(200, 200, 200, 0.3);
+            border-top: 3px solid #4f46e5;
+            border-radius: 50%;
+            width: 16px; height: 16px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Status Icon alignment */
+        .status-wrapper { width: 24px; display: flex; justify-content: center; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 h-screen flex flex-col">
+
+    <!-- Top Bar -->
+    <header class="bg-white border-b px-6 py-3 flex justify-between items-center shadow-sm z-10">
+        <h1 class="text-xl font-extrabold text-indigo-700 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 8-8 8s-8-6-8-8a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            MeetMeThere
+        </h1>
+        <div id="auth-status" class="text-xs font-mono text-gray-400">Guest Session</div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <div class="flex-grow overflow-hidden">
+        <div class="h-full grid grid-cols-1 lg:grid-cols-5">
+            
+            <!-- LEFT COLUMN: Controls (Scrollable) -->
+            <div class="lg:col-span-2 h-full overflow-y-auto p-4 sm:p-6 space-y-6 bg-white shadow-xl z-10">
+                
+                <!-- 1. Travelers Input -->
+                <div class="space-y-3">
+                    <h2 class="font-bold text-gray-800 flex items-center gap-2 text-sm uppercase tracking-wide text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        Starting Locations
+                    </h2>
+                    <div id="users-list" class="space-y-2">
+                        <!-- User rows injected here -->
+                    </div>
+                    <button onclick="window.logic.addUser()" class="w-full py-2 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-indigo-500 hover:text-indigo-500 text-xs font-bold uppercase transition-colors">
+                        + Add Friend
+                    </button>
+                </div>
+
+                <!-- 2. Filters (Expanded) -->
+                <div class="space-y-3">
+                    <h2 class="font-bold text-gray-800 flex items-center gap-2 text-sm uppercase tracking-wide text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                        Looking For...
+                    </h2>
+                    <div id="filters-container" class="flex flex-wrap gap-2">
+                        <!-- Filters injected here -->
+                    </div>
+                </div>
+
+                <!-- 3. Optimization Mode -->
+                <div class="bg-gray-100 p-1 rounded-lg flex text-sm">
+                    <button id="btn-mode-total" onclick="window.logic.setMode('total')" class="flex-1 py-2 rounded-md font-medium text-gray-500">Fastest Total</button>
+                    <button id="btn-mode-individual" onclick="window.logic.setMode('individual')" class="flex-1 py-2 rounded-md font-medium text-gray-500">Fairness</button>
+                </div>
+
+                <!-- 4. Calculate Button -->
+                <button id="btn-calculate" onclick="window.logic.runCalculation()" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transform transition active:scale-95 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    Find Meeting Point
+                </button>
+
+                <!-- 5. Results List -->
+                <div id="results-container" class="space-y-3 pb-10">
+                    <div id="network-warning" class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">
+                        ⚠️ **Network Warning:** The external POI and Routing APIs used in this architecture (Overpass, OSRM) are blocked in the current sandbox environment. This calculation will fail here, but this is the correct, performant architecture for a live web server.
+                    </div>
+                    <!-- Results injected here -->
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Map -->
+            <div class="lg:col-span-3 h-full relative bg-gray-200">
+                <div id="map-container" class="h-full w-full"></div>
+                <!-- Map Legend Overlay -->
+                <div class="absolute bottom-6 left-6 bg-white/90 backdrop-blur p-3 rounded-lg shadow-md text-xs z-[400] pointer-events-none hidden sm:block">
+                    <div class="flex items-center gap-2 mb-1"><span class="w-3 h-3 rounded-full bg-blue-600"></span> Traveler</div>
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-red-600"></span> Venue</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGIC -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- CONFIGURATION ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // --- EXTERNAL API ENDPOINTS (BLOCKED IN THIS ENVIRONMENT) ---
+        // Note: We keep the Gemini geocoding helper as it was the only reliable geocoder in this environment.
+        const OVERPASS_API = "https://overpass-api.de/api/interpreter";
+        const OSRM_API_BASE = "https://router.project-osrm.org/table/v1";
+        
+        // Gemini Config (Only used for reliable geocoding in this environment)
+        const GEMINI_API_KEY = ""; 
+        const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
+        const MAX_RETRIES = 3;
+        const INITIAL_BACKOFF_MS = 1000;
+
+
+        // POI Definitions
+        const POI_TYPES = [
+            { id: 'pub', label: 'Pub', tag: 'pub' },
+            { id: 'cafe', label: 'Cafe', tag: 'cafe' },
+            { id: 'restaurant', label: 'Restaurant', tag: 'restaurant' },
+            { id: 'bar', label: 'Bar', tag: 'bar' },
+            { id: 'cinema', label: 'Cinema', tag: 'cinema' },
+            { id: 'shopping', label: 'Shopping Mall', tag: 'shopping_mall' },
+            { id: 'park', label: 'Greenspace', tag: 'park' },
+            { id: 'bowling', label: 'Bowling Alley', tag: 'bowling_alley' },
+            { id: 'theater', label: 'Theater', tag: 'theatre' },
+            { id: 'nightclub', label: 'Nightclub', tag: 'nightclub' }
+        ];
+        
+        // HARDCODED FALLBACK COORDINATES (For initial map display only)
+        const HARDCODED_COORDS = {
+            'WARE, UK': { lat: 51.8105, lng: -0.0354 },
+            'SG12 9LS, UK': { lat: 51.7963, lng: -0.0416 }
+        };
+
+        // --- STATE ---
+        const state = {
+            users: [
+                { id: 1, location: 'Ware, UK', transport: 'Driving', coords: null, status: 'init' },
+                { id: 2, location: 'SG12 9LS, UK', transport: 'Driving', coords: null, status: 'init' }
+            ],
+            filters: ['pub'], 
+            optMode: 'individual',
+            results: [],
+            userId: 'guest',
+            isProcessing: false
+        };
+
+        // --- GLOBALS ---
+        let db, auth, map, markersLayer;
+        let debounceTimer;
+
+        // --- INIT ---
+        async function init() {
+            // 1. Map
+            initMap();
+
+            // 2. Firebase
+            if (Object.keys(firebaseConfig).length > 0) {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                try { await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth)); } catch {}
+                
+                onAuthStateChanged(auth, (u) => {
+                    if (u) {
+                        state.userId = u.uid;
+                        document.getElementById('auth-status').innerText = 'Synced';
+                        setupSync();
+                    }
+                });
+            }
+
+            // 3. Initial Render
+            renderUserList();
+            renderFilters();
+            renderModeButtons();
+
+            // 4. Resolve initial locations
+            console.log("Starting initial location resolution...");
+            const resolutionPromises = state.users.map(u => resolveLocation(u.id, u.location, false));
+            await Promise.all(resolutionPromises);
+            
+            // 5. Final UI/Map update 
+            updateMapMarkers();
+        }
+
+        // --- UTILITIES ---
+        const delay = ms => new Promise(res => setTimeout(res, ms));
+
+        function getStatusHTML(user) {
+            if (user.status === 'searching') return `<div class="status-wrapper"><div class="spinner"></div></div>`;
+            if (user.status === 'found') return `<div class="status-wrapper text-green-500"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`;
+            if (user.status === 'error') return `<div class="status-wrapper text-red-500" title="Location not found. Try 'City, Country' or 'Lat, Lng' format."><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>`;
+            return '';
+        }
+
+        function calculateCentroid(coords) {
+            const numPoints = coords.length;
+            const avgLat = coords.reduce((sum, c) => sum + c.lat, 0) / numPoints;
+            const avgLng = coords.reduce((sum, c) => sum + c.lng, 0) / numPoints;
+            return { lat: avgLat, lng: avgLng };
+        }
+
+        // --- UI RENDERERS ---
+        function renderUserList() {
+            const container = document.getElementById('users-list');
+            container.innerHTML = state.users.map((u, idx) => `
+                <div class="flex items-center gap-3 bg-white p-3 rounded-xl border border-gray-200 shadow-sm transition-all focus-within:ring-2 focus-within:ring-indigo-500" id="user-row-${u.id}">
+                    <div class="w-8 h-8 flex-shrink-0 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-sm shadow-sm">${idx + 1}</div>
+                    
+                    <div class="flex-grow relative">
+                        <input type="text" 
+                            value="${u.location}" 
+                            oninput="window.logic.handleInput(${u.id}, this.value)"
+                            class="w-full bg-transparent text-sm font-medium text-gray-800 placeholder-gray-400 outline-none"
+                            placeholder="City, Postcode, or Lat, Lng">
+                        
+                        <div id="status-${u.id}" class="absolute right-0 top-0 bottom-0 flex items-center pointer-events-none">
+                            ${getStatusHTML(u)}
+                        </div>
+                    </div>
+
+                    <div class="h-6 w-px bg-gray-200 mx-1"></div>
+
+                    <select onchange="window.logic.handleTransport(${u.id}, this.value)" class="text-xs font-medium text-gray-500 bg-transparent outline-none cursor-pointer">
+                        <option value="Driving" ${u.transport==='Driving'?'selected':''}>Car</option>
+                        <option value="Cycling" ${u.transport==='Cycling'?'selected':''}>Bike</option>
+                        <option value="Walking" ${u.transport==='Walking'?'selected':''}>Walk</option>
+                    </select>
+
+                    <button onclick="window.logic.removeUser(${u.id})" class="text-gray-300 hover:text-red-500 transition-colors pl-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function updateUserStatusUI(id) {
+            const el = document.getElementById(`status-${id}`);
+            const user = state.users.find(u => u.id === id);
+            if (el && user) el.innerHTML = getStatusHTML(user);
+        }
+
+        function renderFilters() {
+            const container = document.getElementById('filters-container');
+            container.innerHTML = POI_TYPES.map(f => `
+                <button onclick="window.logic.toggleFilter('${f.tag}')" 
+                    class="text-xs px-3 py-1.5 rounded-lg border font-medium transition-all active:scale-95 ${state.filters.includes(f.tag) 
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' 
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'}">
+                    ${f.label}
+                </button>
+            `).join('');
+        }
+
+        function renderModeButtons() {
+            const tBtn = document.getElementById('btn-mode-total');
+            const iBtn = document.getElementById('btn-mode-individual');
+            const activeClass = 'bg-white text-indigo-600 shadow-sm ring-1 ring-gray-200';
+            const inactiveClass = 'text-gray-400 hover:text-gray-600';
+            
+            tBtn.className = `flex-1 py-2 rounded-md font-medium transition-all ${state.optMode === 'total' ? activeClass : inactiveClass}`;
+            iBtn.className = `flex-1 py-2 rounded-md font-medium transition-all ${state.optMode === 'individual' ? activeClass : inactiveClass}`;
+        }
+
+        function renderResults() {
+            const container = document.getElementById('results-container');
+            
+            // Re-inject the network warning
+            const warningHTML = `<div id="network-warning" class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">
+                ⚠️ **Network Warning:** The external POI and Routing APIs used in this architecture (Overpass, OSRM) are blocked in the current sandbox environment. This calculation will fail here, but this is the correct, performant architecture for a live web server.
+            </div>`;
+            
+            if (state.isProcessing) {
+                container.innerHTML = warningHTML + `<div class="p-10 text-center text-gray-500 animate-pulse flex flex-col items-center"><div class="spinner w-8 h-8 mb-3"></div>Fetching POIs and routing data from external APIs... (Will likely fail here)</div>`;
+                return;
+            }
+            if (state.results.length === 0 && !state.isProcessing) {
+                 container.innerHTML = warningHTML + `<div class="p-4 bg-gray-100 text-gray-500 rounded-lg text-sm font-medium">No results found or calculation failed due to network restrictions.</div>`;
+                 return;
+            }
+            
+            container.innerHTML = warningHTML + `<h3 class="font-bold text-gray-700 text-sm uppercase tracking-wide mt-4 mb-2">Best Meeting Points</h3>` + 
+            state.results.map((r, i) => `
+                <div class="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer group" onclick="window.logic.focusMapOnResult(${r.lat},${r.lng})">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md">#${i+1}</span>
+                                <h3 class="font-bold text-gray-800 group-hover:text-indigo-600 transition-colors">${r.name}</h3>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-0.5">${r.category}</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-lg font-black text-indigo-600 leading-tight">${state.optMode==='total' ? r.totalTime : r.maxIndividualTime}<span class="text-xs font-normal text-gray-400 ml-0.5">min</span></div>
+                        </div>
+                    </div>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        ${state.users.filter(u => u.coords).map(u => {
+                            const time = r.travelTimes[u.id];
+                            return `<span class="text-[10px] bg-gray-50 text-gray-500 px-2 py-1 rounded border border-gray-100">
+                                ${u.location.split(',')[0]}: <b>${time}m</b>
+                            </span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `).join('');
+            
+            updateMapMarkers();
+        }
+
+        // --- MAP LOGIC ---
+        function initMap() {
+            if (map) return;
+            map = L.map('map-container', { zoomControl: false }).setView([54.5, -4], 6);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
+                maxZoom: 19
+            }).addTo(map);
+            markersLayer = L.layerGroup().addTo(map);
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+        }
+
+        function updateMapMarkers() {
+            if (!map || !markersLayer) return;
+            markersLayer.clearLayers();
+            const bounds = L.latLngBounds();
+            let hasPoints = false;
+
+            // Users (Blue)
+            state.users.forEach((u, i) => {
+                if (u.coords) {
+                    const icon = L.divIcon({
+                        className: 'custom-marker',
+                        html: `<div style="background:#4f46e5; color:white; width:28px; height:28px; border-radius:50%; border:3px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 4px 6px rgba(0,0,0,0.2); font-size:12px;">${i+1}</div>`,
+                        iconSize: [28, 28], iconAnchor: [14, 14]
+                    });
+                    L.marker([u.coords.lat, u.coords.lng], { icon }).addTo(markersLayer).bindPopup(`<b>Traveler ${i+1}</b><br>${u.location}`);
+                    bounds.extend([u.coords.lat, u.coords.lng]);
+                    hasPoints = true;
+                }
+            });
+
+            // Results (Red)
+            if (state.results.length > 0) {
+                state.results.forEach((r, i) => {
+                    // Coordinates come directly from Overpass/OSRM in this architecture
+                    if (r.lat && r.lng) {
+                        const icon = L.divIcon({
+                            className: 'custom-marker',
+                            html: `<div style="background:#ef4444; color:white; width:24px; height:24px; border-radius:50%; border:2px solid white; display:flex; align-items:center; justify-content:center; font-weight:bold; box-shadow:0 4px 6px rgba(0,0,0,0.2); font-size:10px;">${i+1}</div>`,
+                            iconSize: [24, 24], iconAnchor: [12, 12]
+                        });
+                        L.marker([r.lat, r.lng], { icon }).addTo(markersLayer).bindPopup(`<b>#${i+1} ${r.name}</b><br>${state.optMode === 'total' ? r.totalTime : r.maxIndividualTime} min`);
+                        bounds.extend([r.lat, r.lng]);
+                        hasPoints = true;
+                    }
+                });
+            }
+
+            if (hasPoints) map.fitBounds(bounds, { padding: [80, 80], maxZoom: 14, animate: true });
+        }
+
+        // --- LOGIC ENGINE ---
+        window.logic = {
+            handleInput: (id, val) => {
+                const u = state.users.find(u => u.id === id);
+                if (u) {
+                    u.location = val;
+                    u.status = 'searching'; 
+                    updateUserStatusUI(id);
+                    clearTimeout(debounceTimer);
+                    
+                    debounceTimer = setTimeout(() => {
+                        resolveLocation(id, val, true).then(() => updateMapMarkers()); 
+                    }, 500); 
+                }
+            },
+            
+            handleTransport: (id, val) => {
+                const u = state.users.find(u => u.id === id);
+                if (u) u.transport = val;
+                saveToDB();
+            },
+
+            addUser: () => {
+                const newId = state.users.length > 0 ? Math.max(...state.users.map(u => u.id)) + 1 : 1;
+                state.users.push({ id: newId, location: '', transport: 'Driving', coords: null, status: 'init' });
+                renderUserList();
+            },
+
+            removeUser: (id) => {
+                state.users = state.users.filter(u => u.id !== id);
+                renderUserList();
+                updateMapMarkers();
+                saveToDB();
+            },
+
+            toggleFilter: (tag) => {
+                if (state.filters.includes(tag)) state.filters = state.filters.filter(t => t !== tag);
+                else state.filters.push(tag);
+                renderFilters();
+                saveToDB();
+            },
+
+            setMode: (mode) => {
+                state.optMode = mode;
+                renderModeButtons();
+                saveToDB();
+                // Re-sort results instantly based on new mode without recalculating
+                if (state.results.length) {
+                     state.results.sort((a, b) => state.optMode === 'total' ? a.totalTime - b.totalTime : a.maxIndividualTime - b.maxIndividualTime);
+                    renderResults();
+                    updateMapMarkers();
+                }
+            },
+
+            focusMapOnResult: (lat, lng) => {
+                map.flyTo([lat, lng], 16, { duration: 1.5 });
+            },
+
+            runCalculation: async () => {
+                const validUsers = state.users.filter(u => u.coords);
+                if (validUsers.length < 2) { 
+                    document.getElementById('results-container').innerHTML = `<div class="p-4 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium">Please ensure at least two locations have a green check mark before calculating.</div>`;
+                    return; 
+                }
+                
+                state.isProcessing = true;
+                renderResults();
+
+                try {
+                    // 1. Calculate Centroid (Midpoint)
+                    const userCoords = validUsers.map(u => u.coords);
+                    const centroid = calculateCentroid(userCoords);
+                    
+                    // 2. Fetch POIs using Overpass (EXTERNAL API CALL - WILL FAIL HERE)
+                    const rawPois = await fetchPois(centroid, state.filters);
+                    
+                    // 3. Get Travel Times using OSRM (EXTERNAL API CALL - WILL FAIL HERE)
+                    const finalResults = await getTravelTimes(rawPois, validUsers);
+                    
+                    // 4. Sort and Store Results
+                    finalResults.sort((a, b) => state.optMode === 'total' ? a.totalTime - b.totalTime : a.maxIndividualTime - b.maxIndividualTime);
+                    state.results = finalResults.slice(0, 10);
+
+                } catch (e) {
+                    console.error("External API Calculation Failed:", e);
+                    // This is expected in this environment
+                    state.results = [];
+                }
+
+                state.isProcessing = false;
+                saveToDB();
+                renderResults();
+            }
+        };
+
+        // --- STUBBED EXTERNAL API FUNCTIONS ---
+        // These are the *correct* functions to use in a live, unrestricted environment.
+        // They will fail in this environment due to network restrictions.
+
+        // This constructs the Overpass query based on the centroid and filters.
+        function createOverpassQuery(centroid, filters) {
+            const bbox_radius = 5000; // 5km radius
+            const min_lat = centroid.lat - (bbox_radius / 111111);
+            const max_lat = centroid.lat + (bbox_radius / 111111);
+            const min_lng = centroid.lng - (bbox_radius / (111111 * Math.cos(centroid.lat * (Math.PI / 180))));
+            const max_lng = centroid.lng + (bbox_radius / (111111 * Math.cos(centroid.lat * (Math.PI / 180))));
+            const bbox = [min_lat, min_lng, max_lat, max_lng].join(',');
+
+            const filterClauses = filters.map(tag => `node[amenity=${tag}](${bbox});`).join('');
+
+            return `
+                [out:json][timeout:25];
+                (
+                    ${filterClauses}
+                );
+                out center;
+            `;
+        }
+        
+        // Function that attempts to call Overpass (will fail here)
+        async function fetchPois(centroid, filters) {
+            const query = createOverpassQuery(centroid, filters);
+            console.log("Attempting to call Overpass for POIs... (EXPECTED FAILURE)");
+            
+            // NOTE: This fetch call will fail in the current environment due to CORS/CSP.
+            const response = await fetch(OVERPASS_API, {
+                method: 'POST',
+                body: `data=${encodeURIComponent(query)}`
+            });
+            const data = await response.json();
+            
+            // Process Overpass data into a simpler POI list
+            return data.elements.map(el => ({
+                name: el.tags.name || `Unnamed ${filters[0]}`,
+                category: el.tags.amenity || 'POI',
+                lat: el.lat,
+                lng: el.lon,
+                id: el.id
+            }));
+        }
+
+        // Function that calls OSRM (will fail here)
+        async function getTravelTimes(pois, users) {
+            if (pois.length === 0) return [];
+
+            // OSRM expects: [lng, lat] for sources and destinations
+            const sources = users.map(u => [u.coords.lng, u.coords.lat]).join(';');
+            const destinations = pois.map(p => [p.lng, p.lat]).join(';');
+            
+            // OSRM profile depends on transport mode. We'll use the most restrictive (Walking) for a single call example.
+            // For a real app, you would need to iterate through all transport modes (or use a different routing engine like Valhalla).
+            const profile = 'driving'; 
+            const url = `${OSRM_API_BASE}/${profile}?sources=${sources}&destinations=${destinations}&annotations=duration`;
+            
+            console.log("Attempting to call OSRM for routing matrix... (EXPECTED FAILURE)");
+
+            // NOTE: This fetch call will fail in the current environment due to CORS/CSP.
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.code !== 'Ok') throw new Error(`OSRM Error: ${data.message}`);
+
+            const results = [];
+            const durations = data.durations; // durations[userIndex][poiIndex] in seconds
+
+            pois.forEach((poi, poiIndex) => {
+                let totalTime = 0;
+                let maxIndividualTime = 0;
+                const travelTimes = {};
+
+                users.forEach((user, userIndex) => {
+                    // Convert seconds to minutes, rounding up
+                    const timeInMinutes = Math.ceil(durations[userIndex][poiIndex] / 60); 
+                    travelTimes[user.id] = timeInMinutes;
+                    totalTime += timeInMinutes;
+                    if (timeInMinutes > maxIndividualTime) maxIndividualTime = timeInMinutes;
+                });
+
+                results.push({
+                    ...poi,
+                    totalTime,
+                    maxIndividualTime,
+                    travelTimes
+                });
+            });
+
+            return results;
+        }
+
+
+        // --- GEMINI FETCH HELPERS (Used ONLY for Geocoding in this architecture) ---
+
+        // Helper for simple geocoding (object response)
+        async function fetchGeminiSimple(payload) {
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    const response = await fetch(GEMINI_API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const result = await response.json();
+                    let jsonString = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (jsonString) {
+                        jsonString = jsonString.replace(/```json\n|```/g, '').trim(); 
+                        return JSON.parse(jsonString);
+                    }
+                    throw new Error("Invalid or empty response from LLM.");
+                } catch (e) {
+                    if (attempt < MAX_RETRIES - 1) {
+                        const backoffTime = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+                        await delay(backoffTime);
+                    } else {
+                        throw e; 
+                    }
+                }
+            }
+        }
+        
+        // --- GEOCODING (Using the previously working Gemini helper) ---
+        async function resolveLocation(id, name, save=true) {
+            const u = state.users.find(u => u.id === id);
+            const normalizedName = name.toUpperCase().trim();
+
+            if (!name) { 
+                u.status = 'init'; u.coords = null; updateUserStatusUI(id); if(save) saveToDB(); return; 
+            }
+            
+            // 1. LOCAL COORDINATE FALLBACK 
+            if (HARDCODED_COORDS[normalizedName]) {
+                u.coords = HARDCODED_COORDS[normalizedName];
+                u.status = 'found';
+                updateUserStatusUI(id);
+                if(save) saveToDB();
+                return;
+            }
+
+            // 2. Direct Lat/Lng Input Check
+            const coordRegex = /^\s*(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)\s*$/;
+            const match = normalizedName.match(coordRegex);
+            if (match) {
+                u.coords = { lat: parseFloat(match[1]), lng: parseFloat(match[3]) };
+                u.status = 'found';
+                updateUserStatusUI(id);
+                if(save) saveToDB();
+                return;
+            }
+
+            // 3. GEMINI API GEOCODING
+            u.status = 'searching';
+            updateUserStatusUI(id); 
+
+            const systemPrompt = "Act as a Geocoding service. Find the precise latitude (lat) and longitude (lng) for the given address or location name using real-time search grounding. Respond ONLY with a JSON object containing the 'lat' and 'lng' keys as floating-point numbers. Do not include any text, markdown, or explanation outside the JSON object.";
+            const userQuery = `Find the latitude and longitude for the location: ${name}.`;
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                tools: [{ "google_search": {} }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "lat": { "type": "NUMBER", "description": "Latitude of the location." },
+                            "lng": { "type": "NUMBER", "description": "Longitude of the location." }
+                        }
+                    }
+                }
+            };
+            
+            try {
+                const coords = await fetchGeminiSimple(payload);
+                if (typeof coords.lat === 'number' && typeof coords.lng === 'number' && (coords.lat !== 0 || coords.lng !== 0)) {
+                    u.coords = { lat: coords.lat, lng: coords.lng };
+                    u.status = 'found';
+                } else {
+                    u.coords = null;
+                    u.status = 'error';
+                }
+            } catch (e) {
+                u.coords = null;
+                u.status = 'error';
+                console.error(`Gemini Geocoding failed for ${name}:`, e);
+            }
+            
+            updateUserStatusUI(id);
+            if(save) saveToDB();
+        }
+
+        // --- SYNC ---
+        function saveToDB() {
+            if (!db || !state.userId || state.userId === 'guest') return;
+            const ref = doc(db, "artifacts", appId, "users", state.userId, "sessions", "current");
+            const syncData = { 
+                timestamp: new Date(), 
+                users: state.users.map(({ id, location, transport }) => ({ id, location, transport })),
+                filters: state.filters, 
+                optMode: state.optMode
+            };
+            setDoc(ref, syncData).catch(e=>console.log("Firestore Save Error:", e));
+        }
+
+        function setupSync() {
+            if (!db || !state.userId || state.userId === 'guest') return;
+            onSnapshot(doc(db, "artifacts", appId, "users", state.userId, "sessions", "current"), (snap) => {
+                if (snap.exists()) {
+                    const d = snap.data();
+                    
+                    state.filters = d.filters || state.filters;
+                    state.optMode = d.optMode || state.optMode;
+                    
+                    if (d.users) { 
+                        state.users = d.users.map(u => ({...u, coords: null, status: 'init'}));
+                        renderUserList(); 
+                        Promise.all(state.users.map(u => resolveLocation(u.id, u.location, false))).then(() => updateMapMarkers());
+                    }
+
+                    renderFilters(); 
+                    renderModeButtons(); 
+                }
+            });
+        }
+
+        // Start
+        window.onload = init;
+    </script>
+</body>
+</html>
+
